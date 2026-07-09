@@ -78,15 +78,25 @@ def load_private_config() -> None:
             os.environ[env_name] = str(value)
 
 
+def normalize_config_value(value: str) -> str:
+    """兼容误填的 b"..."、引号和首尾空白。"""
+    value = str(value or "").strip()
+    if len(value) >= 3 and value[0] in "bB" and value[1] in {"'", '"'} and value[-1] == value[1]:
+        value = value[2:-1].strip()
+    if len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]:
+        value = value[1:-1].strip()
+    return value
+
+
 load_env_file(APP_ROOT / ".env")
 load_private_config()
 
 
 API_BASE = "https://app-api-gw-toc.lynkco.com"
 SERVICE_BASE = "https://app-services.lynkco.com.cn"
-APP_CODE = os.getenv("LYNKCO_APP_CODE", "")
-CA_KEY = os.getenv("LYNKCO_CA_KEY", "")
-CA_SECRET = os.getenv("LYNKCO_CA_SECRET", "").encode("utf-8")
+APP_CODE = normalize_config_value(os.getenv("LYNKCO_APP_CODE", ""))
+CA_KEY = normalize_config_value(os.getenv("LYNKCO_CA_KEY", ""))
+CA_SECRET = normalize_config_value(os.getenv("LYNKCO_CA_SECRET", "")).encode("utf-8")
 SIGN_HEADERS = "X-Ca-Key,X-Ca-Timestamp,X-Ca-Nonce,X-Ca-Signature-Method"
 DEFAULT_TOKEN_FILE = APP_ROOT / "lynkco_token.json"
 DEFAULT_DEVICE_FILE = APP_ROOT / "lynkco_device.json"

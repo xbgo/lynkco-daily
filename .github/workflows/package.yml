@@ -83,10 +83,18 @@ jobs:
           import os
           from pprint import pformat
 
+          def clean(value):
+              value = (value or "").strip()
+              if len(value) >= 3 and value[0] in "bB" and value[1] in "'\"" and value[-1] == value[1]:
+                  value = value[2:-1].strip()
+              if len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0]:
+                  value = value[1:-1].strip()
+              return value
+
           values = {
-              "LYNKCO_APP_CODE": os.getenv("LYNKCO_APP_CODE", ""),
-              "LYNKCO_CA_KEY": os.getenv("LYNKCO_CA_KEY", ""),
-              "LYNKCO_CA_SECRET": os.getenv("LYNKCO_CA_SECRET", ""),
+              "LYNKCO_APP_CODE": clean(os.getenv("LYNKCO_APP_CODE", "")),
+              "LYNKCO_CA_KEY": clean(os.getenv("LYNKCO_CA_KEY", "")),
+              "LYNKCO_CA_SECRET": clean(os.getenv("LYNKCO_CA_SECRET", "")),
           }
           Path("lynkco_private.py").write_text("SECRETS = " + pformat(values) + "\n", encoding="utf-8")
           '@ | python -
@@ -241,10 +249,18 @@ jobs:
           import os
           from pprint import pformat
 
+          def clean(value):
+              value = (value or "").strip()
+              if len(value) >= 3 and value[0] in "bB" and value[1] in "'\"" and value[-1] == value[1]:
+                  value = value[2:-1].strip()
+              if len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0]:
+                  value = value[1:-1].strip()
+              return value
+
           values = {
-              "LYNKCO_APP_CODE": os.getenv("LYNKCO_APP_CODE", ""),
-              "LYNKCO_CA_KEY": os.getenv("LYNKCO_CA_KEY", ""),
-              "LYNKCO_CA_SECRET": os.getenv("LYNKCO_CA_SECRET", ""),
+              "LYNKCO_APP_CODE": clean(os.getenv("LYNKCO_APP_CODE", "")),
+              "LYNKCO_CA_KEY": clean(os.getenv("LYNKCO_CA_KEY", "")),
+              "LYNKCO_CA_SECRET": clean(os.getenv("LYNKCO_CA_SECRET", "")),
           }
           Path("lynkco_private.py").write_text("SECRETS = " + pformat(values) + "\n", encoding="utf-8")
           PY
