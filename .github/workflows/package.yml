@@ -195,7 +195,6 @@ jobs:
         with:
           name: LynkcoDaily-windows-x64-setup
           path: dist/LynkcoDaily-*-windows-x64-setup.exe
-          archive: false
           if-no-files-found: error
 
       - name: Upload Windows portable artifact
@@ -203,7 +202,6 @@ jobs:
         with:
           name: LynkcoDaily-windows-x64-zip
           path: dist/LynkcoDaily-*-windows-x64.zip
-          archive: false
           if-no-files-found: error
 
   build-macos:
@@ -322,7 +320,6 @@ jobs:
         with:
           name: LynkcoDaily-macos-${{ matrix.arch }}-dmg
           path: dist/LynkcoDaily-*-macos-*.dmg
-          archive: false
           if-no-files-found: error
 
       - name: Upload macOS app zip artifact
@@ -330,7 +327,6 @@ jobs:
         with:
           name: LynkcoDaily-macos-${{ matrix.arch }}-zip
           path: dist/LynkcoDaily-*-macos-*.zip
-          archive: false
           if-no-files-found: error
 
   checksums:
@@ -401,7 +397,6 @@ jobs:
         with:
           name: SHA256SUMS
           path: release-assets/SHA256SUMS.txt
-          archive: false
           if-no-files-found: error
 
       - name: Upload MD5 checksum artifact
@@ -409,7 +404,6 @@ jobs:
         with:
           name: MD5SUMS
           path: release-assets/MD5SUMS.txt
-          archive: false
           if-no-files-found: error
 
       - name: Upload latest metadata artifact
@@ -417,7 +411,6 @@ jobs:
         with:
           name: latest-json
           path: release-assets/latest.json
-          archive: false
           if-no-files-found: error
 
   release:
