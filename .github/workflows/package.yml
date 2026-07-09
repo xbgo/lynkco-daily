@@ -481,9 +481,9 @@ jobs:
             exit 1
           fi
 
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "${assets[@]}" --clobber
-            gh release edit "$tag" --title "$tag" --notes-file release-notes.md "${prerelease_args[@]}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$tag" --notes-file release-notes.md "${prerelease_args[@]}"
           else
-            gh release create "$tag" "${assets[@]}" --target "$GITHUB_SHA" --title "$tag" --notes-file release-notes.md "${prerelease_args[@]}"
+            gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$tag" --notes-file release-notes.md "${prerelease_args[@]}"
           fi
