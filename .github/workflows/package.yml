@@ -193,6 +193,7 @@ jobs:
       - name: Upload Windows setup artifact
         uses: actions/upload-artifact@v7
         with:
+          name: LynkcoDaily-windows-x64-setup
           path: dist/LynkcoDaily-*-windows-x64-setup.exe
           archive: false
           if-no-files-found: error
@@ -200,6 +201,7 @@ jobs:
       - name: Upload Windows portable artifact
         uses: actions/upload-artifact@v7
         with:
+          name: LynkcoDaily-windows-x64-zip
           path: dist/LynkcoDaily-*-windows-x64.zip
           archive: false
           if-no-files-found: error
@@ -318,6 +320,7 @@ jobs:
       - name: Upload macOS dmg artifact
         uses: actions/upload-artifact@v7
         with:
+          name: LynkcoDaily-macos-${{ matrix.arch }}-dmg
           path: dist/LynkcoDaily-*-macos-*.dmg
           archive: false
           if-no-files-found: error
@@ -325,6 +328,7 @@ jobs:
       - name: Upload macOS app zip artifact
         uses: actions/upload-artifact@v7
         with:
+          name: LynkcoDaily-macos-${{ matrix.arch }}-zip
           path: dist/LynkcoDaily-*-macos-*.zip
           archive: false
           if-no-files-found: error
@@ -355,8 +359,14 @@ jobs:
           if [[ -z "${version}" ]]; then
             version="dev-${GITHUB_RUN_NUMBER}"
           fi
-          sha256sum LynkcoDaily-*.exe LynkcoDaily-*.dmg LynkcoDaily-*.zip > SHA256SUMS.txt
-          md5sum LynkcoDaily-*.exe LynkcoDaily-*.dmg LynkcoDaily-*.zip > MD5SUMS.txt
+          mapfile -t files < <(find . -maxdepth 1 -type f \( -name 'LynkcoDaily-*.exe' -o -name 'LynkcoDaily-*.dmg' -o -name 'LynkcoDaily-*.zip' \) -printf '%f\n' | sort)
+          if [[ ${#files[@]} -lt 6 ]]; then
+            echo "产物不完整，当前文件：" >&2
+            find . -maxdepth 1 -type f -printf '%f\n' | sort >&2
+            exit 1
+          fi
+          printf '%s\0' "${files[@]}" | xargs -0 sha256sum > SHA256SUMS.txt
+          printf '%s\0' "${files[@]}" | xargs -0 md5sum > MD5SUMS.txt
           python - <<'PY'
           from datetime import datetime, timezone
           from pathlib import Path
@@ -371,7 +381,11 @@ jobs:
 
           repo = os.environ["GITHUB_REPOSITORY"]
           base = f"https://github.com/{repo}/releases/download/{version}"
-          files = sorted(path.name for path in Path(".").glob("LynkcoDaily-*"))
+          files = sorted(
+              path.name
+              for path in Path(".").iterdir()
+              if path.is_file() and path.name.startswith("LynkcoDaily-") and path.suffix in {".exe", ".dmg", ".zip"}
+          )
           payload = {
               "version": version,
               "pub_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -385,6 +399,7 @@ jobs:
       - name: Upload SHA256 checksum artifact
         uses: actions/upload-artifact@v7
         with:
+          name: SHA256SUMS
           path: release-assets/SHA256SUMS.txt
           archive: false
           if-no-files-found: error
@@ -392,6 +407,7 @@ jobs:
       - name: Upload MD5 checksum artifact
         uses: actions/upload-artifact@v7
         with:
+          name: MD5SUMS
           path: release-assets/MD5SUMS.txt
           archive: false
           if-no-files-found: error
@@ -399,6 +415,7 @@ jobs:
       - name: Upload latest metadata artifact
         uses: actions/upload-artifact@v7
         with:
+          name: latest-json
           path: release-assets/latest.json
           archive: false
           if-no-files-found: error
@@ -450,14 +467,15 @@ jobs:
           本项目仅供学习交流使用，请勿用于商业用途。
           EOF
 
-          shopt -s nullglob
-          assets=(
-            release-assets/LynkcoDaily-*.exe
-            release-assets/LynkcoDaily-*.dmg
-            release-assets/LynkcoDaily-*.zip
-            release-assets/SHA256SUMS.txt
-            release-assets/MD5SUMS.txt
-            release-assets/latest.json
+          mapfile -t assets < <(
+            find release-assets -maxdepth 1 -type f \( \
+              -name 'LynkcoDaily-*.exe' -o \
+              -name 'LynkcoDaily-*.dmg' -o \
+              -name 'LynkcoDaily-*.zip' -o \
+              -name 'SHA256SUMS.txt' -o \
+              -name 'MD5SUMS.txt' -o \
+              -name 'latest.json' \
+            \) | sort
           )
 
           prerelease_args=()
