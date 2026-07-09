@@ -101,6 +101,8 @@ SIGN_HEADERS = "X-Ca-Key,X-Ca-Timestamp,X-Ca-Nonce,X-Ca-Signature-Method"
 DEFAULT_TOKEN_FILE = APP_ROOT / "lynkco_token.json"
 DEFAULT_DEVICE_FILE = APP_ROOT / "lynkco_device.json"
 TOKEN_CACHE_KEYS = ("token", "refreshToken", "accountName")
+HTTP_TIMEOUT = int(os.getenv("LYNKCO_HTTP_TIMEOUT", "15"))
+HTTP_RETRIES = max(1, int(os.getenv("LYNKCO_HTTP_RETRIES", "3")))
 
 
 def _uuid4_like() -> str:
@@ -617,15 +619,26 @@ class LynkClient:
             if data is not None:
                 print(json.dumps(data, ensure_ascii=False))
 
-        req = Request(url, data=body, headers=headers, method=method.upper())
-        try:
-            with urlopen(req, timeout=20) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-        except HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"HTTP {exc.code}: {raw}") from exc
-        except URLError as exc:
-            raise RuntimeError(f"network error: {exc}") from exc
+        last_error: RuntimeError | None = None
+        for attempt in range(HTTP_RETRIES):
+            req = Request(url, data=body, headers=headers, method=method.upper())
+            try:
+                with urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+                    raw = resp.read().decode("utf-8", errors="replace")
+                break
+            except HTTPError as exc:
+                raw = exc.read().decode("utf-8", errors="replace")
+                error = RuntimeError(f"HTTP {exc.code}: {raw}")
+                if exc.code < 500 or attempt == HTTP_RETRIES - 1:
+                    raise error from exc
+                last_error = error
+            except URLError as exc:
+                last_error = RuntimeError(f"network error: {exc}")
+                if attempt == HTTP_RETRIES - 1:
+                    raise last_error from exc
+            time.sleep(0.6 * (attempt + 1))
+        else:
+            raise last_error or RuntimeError("network error")
 
         try:
             return json.loads(raw)
@@ -836,6 +849,10 @@ def print_json(label: str, value: dict[str, Any]) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2))
 
 
+def print_error(label: str, exc: Exception) -> None:
+    print_json(label, {"error": str(exc)})
+
+
 def print_token_result(token_file: Path, access_token: str, refresh_token: str, show_secrets: bool = False) -> None:
     value = {
         "token_file": str(token_file),
@@ -1008,15 +1025,27 @@ def main() -> int:
         return 0
 
     if args.status:
-        sign_summary_response = client.sign_summary()
-        print_json("sign_summary", sign_summary_response)
+        sign_summary_response = None
+        try:
+            sign_summary_response = client.sign_summary()
+            print_json("sign_summary", sign_summary_response)
+        except RuntimeError as exc:
+            print_error("sign_summary_error", exc)
         print_json("account_summary", client.account_summary(sign_summary_response, account_profile))
-        print_json("task_list", client.task_list())
+        try:
+            print_json("task_list", client.task_list())
+        except RuntimeError as exc:
+            print_error("task_list_error", exc)
         return 0
 
-    print_json("sign_in", client.sign_in())
-    sign_summary_response = client.sign_summary()
-    print_json("sign_summary", sign_summary_response)
+    sign_in_response = client.sign_in()
+    print_json("sign_in", sign_in_response)
+    sign_summary_response = None
+    try:
+        sign_summary_response = client.sign_summary()
+        print_json("sign_summary", sign_summary_response)
+    except RuntimeError as exc:
+        print_error("sign_summary_error", exc)
     print_json("account_summary", client.account_summary(sign_summary_response, account_profile))
 
     if not args.skip_share:
@@ -1024,10 +1053,13 @@ def main() -> int:
             print("\n[share] skipped: pass --business-no/--share-url or set LYNKCO_BUSINESS_NO/LYNKCO_SHARE_URL")
         else:
             if not share_code and share_url and not args.no_get_share_code:
-                share_code_response = client.get_share_code(share_url, effective_device["appVersion"] or "4.2.3")
-                print_json("get_share_code", share_code_response)
-                if share_code_response.get("code") == "success" and share_code_response.get("data"):
-                    share_code = str(share_code_response["data"])
+                try:
+                    share_code_response = client.get_share_code(share_url, effective_device["appVersion"] or "4.2.3")
+                    print_json("get_share_code", share_code_response)
+                    if share_code_response.get("code") == "success" and share_code_response.get("data"):
+                        share_code = str(share_code_response["data"])
+                except RuntimeError as exc:
+                    print_error("get_share_code_error", exc)
             print_json("share_report", client.report_share(business_no, first, second))
             if share_code:
                 print_json("share_code_report", client.report_share_code(share_code, business_no, first, second))

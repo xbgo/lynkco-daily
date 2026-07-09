@@ -131,6 +131,8 @@ NOTIFY_CHANNELS = [
 ADVANCED_FIELDS = [
     ("LYNKCO_HITOKOTO_URL", "一言接口", False, "默认使用 https://v1.hitokoto.cn/?encode=json&charset=utf-8。"),
     ("LYNKCO_HITOKOTO_TIMEOUT", "一言超时", False, "单位秒，默认 2。接口超时会自动忽略，不影响签到。"),
+    ("LYNKCO_HTTP_TIMEOUT", "接口超时", False, "单位秒，默认 15。网络慢可以适当调大。"),
+    ("LYNKCO_HTTP_RETRIES", "失败重试", False, "默认 3。遇到临时网络断开会自动重试。"),
     ("LYNKCO_AUTO_TIMEOUT", "任务超时", False, "单位秒，默认 180。网络慢可以适当调大。"),
     ("PYTHON_EXE", "Python 路径", False, "可选。留空时使用当前 Python；打包版通常不需要填。"),
 ]
