@@ -48,6 +48,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - name: Write built-in signature config
+        shell: pwsh
+        env:
+          LYNKCO_APP_CODE: ${{ secrets.LYNKCO_APP_CODE }}
+          LYNKCO_CA_KEY: ${{ secrets.LYNKCO_CA_KEY }}
+          LYNKCO_CA_SECRET: ${{ secrets.LYNKCO_CA_SECRET }}
+        run: |
+          @'
+          from pathlib import Path
+          import os
+          from pprint import pformat
+
+          values = {
+              "LYNKCO_APP_CODE": os.getenv("LYNKCO_APP_CODE", ""),
+              "LYNKCO_CA_KEY": os.getenv("LYNKCO_CA_KEY", ""),
+              "LYNKCO_CA_SECRET": os.getenv("LYNKCO_CA_SECRET", ""),
+          }
+          Path("lynkco_private.py").write_text("SECRETS = " + pformat(values) + "\n", encoding="utf-8")
+          '@ | python -
+
       - name: Build Windows exe
         shell: pwsh
         run: |
@@ -55,6 +75,7 @@ jobs:
             --name LynkcoDaily `
             --icon assets/apk.ico `
             --collect-data customtkinter `
+            --hidden-import lynkco_private `
             --hidden-import lynkco_auto `
             --hidden-import lynkco_daily `
             --hidden-import lynkco_paths `
@@ -93,6 +114,26 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
+
+      - name: Write built-in signature config
+        shell: bash
+        env:
+          LYNKCO_APP_CODE: ${{ secrets.LYNKCO_APP_CODE }}
+          LYNKCO_CA_KEY: ${{ secrets.LYNKCO_CA_KEY }}
+          LYNKCO_CA_SECRET: ${{ secrets.LYNKCO_CA_SECRET }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          from pprint import pformat
+
+          values = {
+              "LYNKCO_APP_CODE": os.getenv("LYNKCO_APP_CODE", ""),
+              "LYNKCO_CA_KEY": os.getenv("LYNKCO_CA_KEY", ""),
+              "LYNKCO_CA_SECRET": os.getenv("LYNKCO_CA_SECRET", ""),
+          }
+          Path("lynkco_private.py").write_text("SECRETS = " + pformat(values) + "\n", encoding="utf-8")
+          PY
 
       - name: Build macOS app and dmg
         shell: bash
@@ -133,6 +174,7 @@ jobs:
             --name LynkcoDaily \
             --icon assets/apk.icns \
             --collect-data customtkinter \
+            --hidden-import lynkco_private \
             --hidden-import lynkco_auto \
             --hidden-import lynkco_daily \
             --hidden-import lynkco_paths \
