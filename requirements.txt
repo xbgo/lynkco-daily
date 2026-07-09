@@ -1,0 +1,4 @@
+# Daily sign/share scripts use Python stdlib only.
+# The desktop GUI uses customtkinter for a modern local interface.
+customtkinter>=5.2.2
+Pillow>=10.0.0

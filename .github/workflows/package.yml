@@ -1,0 +1,83 @@
+name: Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax check
+        run: python -m py_compile lynkco_daily.py lynkco_auto.py lynkco_gui.py qinglong/lynkco_ql.py
+
+      - name: Secret guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE 'bearer[a-zA-Z0-9-]{20,}|LYNKCO_CA_SECRET=.+|LYNKCO_REFRESH_TOKEN=.+|LYNKCO_TOKEN=.+' \
+            --exclude-dir=.git --exclude-dir=.github --exclude='.env.example' --exclude='README.md' --exclude='qinglong/README.md' .; then
+            echo "疑似敏感信息，请确认后再打包。" >&2
+            exit 1
+          fi
+
+      - name: Build packages
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+
+          root = Path.cwd()
+          dist = root / "dist"
+          dist.mkdir(exist_ok=True)
+
+          common = [
+              "README.md",
+              "DISCLAIMER.md",
+              "LICENSE",
+              ".env.example",
+              "requirements.txt",
+              "lynkco_daily.py",
+              "lynkco_auto.py",
+              "lynkco_gui.py",
+              "assets/zsm.png",
+              "qinglong/README.md",
+              "qinglong/env.example",
+              "qinglong/lynkco_ql.py",
+          ]
+          windows = common + ["windows/README.md"]
+          macos = common + ["macos/README.md"]
+
+          def existing(paths):
+              return [p for p in paths if (root / p).is_file()]
+
+          with zipfile.ZipFile(dist / "lynkco-daily-windows.zip", "w", zipfile.ZIP_DEFLATED) as zf:
+              for name in existing(windows):
+                  zf.write(root / name, f"lynkco-daily/{name}")
+
+          with tarfile.open(dist / "lynkco-daily-macos.tar.gz", "w:gz") as tf:
+              for name in existing(macos):
+                  tf.add(root / name, f"lynkco-daily/{name}")
+
+          with zipfile.ZipFile(dist / "lynkco-daily-source.zip", "w", zipfile.ZIP_DEFLATED) as zf:
+              for name in existing(sorted(set(windows + macos))):
+                  zf.write(root / name, f"lynkco-daily/{name}")
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lynkco-daily-packages
+          path: dist/*
