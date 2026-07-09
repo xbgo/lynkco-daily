@@ -287,19 +287,6 @@ python3 qinglong/lynkco_ql.py
 0 10 * * *
 ```
 
-## GitHub Actions 打包
-
-仓库内置 `.github/workflows/package.yml`。后续需要发布时，可以在 GitHub 的 Actions 页面手动运行 `Package`，会生成：
-
-- Windows `.exe` 压缩包
-- macOS `.dmg` 安装包
-- 通用源码包
-
-打包流程只收录仓库文件，不会收录 `.env`、token 缓存、设备缓存、日志等本地敏感文件。打包版运行时会把配置和日志放到系统用户目录，不会写到安装目录：
-
-- Windows：`%APPDATA%\lynkco-daily`
-- macOS：`~/Library/Application Support/lynkco-daily`
-
 ## 赞赏
 
 觉得好用可以随缘支持：
