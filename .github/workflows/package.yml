@@ -2,6 +2,21 @@ name: Package
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "是否直接发布 GitHub Release"
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: "发布版本号，例如 v1.0.0。留空时只构建不发布"
+        required: false
+        type: string
+      prerelease:
+        description: "是否标记为预发布"
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - "v*"
@@ -86,21 +101,23 @@ jobs:
             --add-data ".env.example;." `
             --add-data "assets/zsm.png;assets" `
             lynkco_gui.py
-          New-Item -ItemType Directory -Force -Path package | Out-Null
-          New-Item -ItemType Directory -Force -Path package\assets | Out-Null
-          Copy-Item dist\LynkcoDaily.exe package\LynkcoDaily.exe
-          Copy-Item README.md package\
-          Copy-Item DISCLAIMER.md package\
-          Copy-Item LICENSE package\
-          Copy-Item assets\zsm.png package\assets\zsm.png
-          Copy-Item assets\apk.ico package\assets\apk.ico
-          Compress-Archive -Path package\* -DestinationPath dist\LynkcoDaily-Windows.zip -Force
+          $Version = "${{ github.ref_name }}"
+          if ("${{ github.ref_type }}" -ne "tag") {
+            $Version = "${{ inputs.release_tag }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($Version)) {
+            $Version = "dev-${{ github.run_number }}"
+          }
+          $SafeVersion = $Version -replace '[^A-Za-z0-9._-]', '-'
+          Copy-Item dist\LynkcoDaily.exe "dist\LynkcoDaily-$SafeVersion-windows-x64.exe"
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: LynkcoDaily-Windows
-          path: dist/LynkcoDaily-Windows.zip
+          path: dist/LynkcoDaily-*-windows-x64.exe
+          archive: false
+          if-no-files-found: error
 
   build-macos:
     needs: check
@@ -192,13 +209,29 @@ jobs:
           cp assets/zsm.png dmg-root/assets/
           cp assets/apk.ico dmg-root/assets/
           ln -s /Applications dmg-root/Applications
-          hdiutil create -volname "LynkcoDaily" -srcfolder dmg-root -ov -format UDZO dist/LynkcoDaily-macOS.dmg
+          version="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            version="${{ inputs.release_tag }}"
+          fi
+          if [[ -z "${version}" ]]; then
+            version="dev-${GITHUB_RUN_NUMBER}"
+          fi
+          safe_version="$(echo "${version}" | sed 's/[^A-Za-z0-9._-]/-/g')"
+          runner_arch="$(uname -m)"
+          if [[ "${runner_arch}" == "arm64" ]]; then
+            os_arch="arm64"
+          else
+            os_arch="x64"
+          fi
+          hdiutil create -volname "LynkcoDaily" -srcfolder dmg-root -ov -format UDZO "dist/LynkcoDaily-${safe_version}-macos-${os_arch}.dmg"
 
       - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: LynkcoDaily-macOS
-          path: dist/LynkcoDaily-macOS.dmg
+          path: dist/LynkcoDaily-*-macos-*.dmg
+          archive: false
+          if-no-files-found: error
 
   build-source:
     needs: check
@@ -210,32 +243,76 @@ jobs:
       - name: Build source archive
         run: |
           mkdir -p dist
-          git archive --format=zip --output=dist/lynkco-daily-source.zip HEAD
+          version="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            version="${{ inputs.release_tag }}"
+          fi
+          if [[ -z "${version}" ]]; then
+            version="dev-${GITHUB_RUN_NUMBER}"
+          fi
+          safe_version="$(echo "${version}" | sed 's/[^A-Za-z0-9._-]/-/g')"
+          git archive --prefix="lynkco-daily-${safe_version}/" --format=zip --output="dist/lynkco-daily-${safe_version}-source.zip" HEAD
 
       - name: Upload source artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lynkco-daily-source
-          path: dist/lynkco-daily-source.zip
+          path: dist/lynkco-daily-*-source.zip
+          archive: false
+          if-no-files-found: error
+
+  checksums:
+    needs:
+      - build-windows
+      - build-macos
+      - build-source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          pattern: "*"
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum LynkcoDaily-*.exe LynkcoDaily-*.dmg lynkco-daily-*-source.zip > SHA256SUMS.txt
+          md5sum LynkcoDaily-*.exe LynkcoDaily-*.dmg lynkco-daily-*-source.zip > MD5SUMS.txt
+          cat SHA256SUMS.txt
+          cat MD5SUMS.txt
+
+      - name: Upload SHA256 checksum artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: release-assets/SHA256SUMS.txt
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload MD5 checksum artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: release-assets/MD5SUMS.txt
+          archive: false
+          if-no-files-found: error
 
   release:
     needs:
       - build-windows
       - build-macos
       - build-source
-    if: startsWith(github.ref, 'refs/tags/v')
+      - checksums
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.release_tag != '')
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets/windows release-assets/macos release-assets/source
-          gh run download "$GITHUB_RUN_ID" --name LynkcoDaily-Windows --dir release-assets/windows
-          gh run download "$GITHUB_RUN_ID" --name LynkcoDaily-macOS --dir release-assets/macos
-          gh run download "$GITHUB_RUN_ID" --name lynkco-daily-source --dir release-assets/source
-          find release-assets -maxdepth 3 -type f -print
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          pattern: "*"
+          merge-multiple: true
 
       - name: Publish release
         env:
@@ -243,27 +320,48 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            tag="${{ inputs.release_tag }}"
+          fi
+          if [[ -z "${tag}" ]]; then
+            echo "release_tag 不能为空" >&2
+            exit 1
+          fi
           cat > release-notes.md <<'EOF'
           领克每日任务桌面版发布包。
 
           下载说明：
 
-          - Windows 用户下载 `LynkcoDaily-Windows.zip`，解压后运行 `LynkcoDaily.exe`
-          - macOS 用户下载 `LynkcoDaily-macOS.dmg`，打开后把 App 拖到 Applications
-          - 青龙面板或源码部署用户下载 `lynkco-daily-source.zip`
+          - Windows 用户下载 `LynkcoDaily-*-windows-x64.exe`
+          - macOS 用户下载 `LynkcoDaily-*-macos-*.dmg`
+          - 青龙面板或源码部署用户下载 `lynkco-daily-*-source.zip`
+          - 校验文件：`SHA256SUMS.txt`、`MD5SUMS.txt`
 
           本项目仅供学习交流使用，请勿用于商业用途。
           EOF
 
+          shopt -s nullglob
           assets=(
-            "release-assets/windows/LynkcoDaily-Windows.zip"
-            "release-assets/macos/LynkcoDaily-macOS.dmg"
-            "release-assets/source/lynkco-daily-source.zip"
+            release-assets/LynkcoDaily-*.exe
+            release-assets/LynkcoDaily-*.dmg
+            release-assets/lynkco-daily-*-source.zip
+            release-assets/SHA256SUMS.txt
+            release-assets/MD5SUMS.txt
           )
+
+          prerelease_args=()
+          if [[ "${{ inputs.prerelease }}" == "true" ]]; then
+            prerelease_args=(--prerelease)
+          fi
+          if [[ ${#assets[@]} -lt 5 ]]; then
+            echo "发布产物不完整：" >&2
+            printf '%s\n' "${assets[@]}" >&2
+            exit 1
+          fi
 
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${assets[@]}" --clobber
-            gh release edit "$tag" --title "$tag" --notes-file release-notes.md
+            gh release edit "$tag" --title "$tag" --notes-file release-notes.md "${prerelease_args[@]}"
           else
-            gh release create "$tag" "${assets[@]}" --title "$tag" --notes-file release-notes.md
+            gh release create "$tag" "${assets[@]}" --target "$GITHUB_SHA" --title "$tag" --notes-file release-notes.md "${prerelease_args[@]}"
           fi
