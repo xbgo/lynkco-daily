@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -25,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInE 'bearer[a-zA-Z0-9-]{20,}|LYNKCO_CA_SECRET=.+|LYNKCO_REFRESH_TOKEN=.+|LYNKCO_TOKEN=.+' \
+          if grep -RInE 'bearer[a-zA-Z0-9-]{20,}|LYNKCO_CA_SECRET=.+|LYNKCO_(REFRESH_TOKEN|TOKEN)=bearer[a-zA-Z0-9-]{20,}' \
             --exclude-dir=.git --exclude-dir=.github --exclude='.env.example' --exclude='README.md' --exclude='qinglong/README.md' .; then
             echo "疑似敏感信息，请确认后再打包。" >&2
             exit 1
@@ -36,10 +36,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -103,10 +103,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -201,7 +201,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build source archive
         run: |
