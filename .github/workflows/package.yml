@@ -67,6 +67,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
       - name: Write built-in signature config
         shell: pwsh
         env:
@@ -108,20 +112,91 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($Version)) {
             $Version = "dev-${{ github.run_number }}"
           }
-          $SafeVersion = $Version -replace '[^A-Za-z0-9._-]', '-'
-          Copy-Item dist\LynkcoDaily.exe "dist\LynkcoDaily-$SafeVersion-windows-x64.exe"
+          $FileVersion = $Version.TrimStart("v")
+          $SafeVersion = $FileVersion -replace '[^A-Za-z0-9._-]', '-'
+          $PortableDir = "package\LynkcoDaily"
+          New-Item -ItemType Directory -Force -Path "$PortableDir\assets" | Out-Null
+          Copy-Item dist\LynkcoDaily.exe "$PortableDir\LynkcoDaily.exe"
+          Copy-Item README.md "$PortableDir\README.md"
+          Copy-Item DISCLAIMER.md "$PortableDir\DISCLAIMER.md"
+          Copy-Item LICENSE "$PortableDir\LICENSE"
+          Copy-Item assets\zsm.png "$PortableDir\assets\zsm.png"
+          Copy-Item assets\apk.ico "$PortableDir\assets\apk.ico"
+          Compress-Archive -Path "$PortableDir\*" -DestinationPath "dist\LynkcoDaily-$SafeVersion-windows-x64.zip" -Force
 
-      - name: Upload Windows artifact
+          $AppVersion = $FileVersion
+          @"
+          [Setup]
+          AppId={{8F3A67D4-05E4-4CE5-8E52-973A2D41C3B4}
+          AppName=LynkcoDaily
+          AppVersion=$AppVersion
+          AppPublisher=小八
+          AppPublisherURL=https://xbcars.cn
+          DefaultDirName={autopf}\LynkcoDaily
+          DefaultGroupName=LynkcoDaily
+          DisableProgramGroupPage=yes
+          OutputDir=dist
+          OutputBaseFilename=LynkcoDaily-$SafeVersion-windows-x64-setup
+          SetupIconFile=assets\apk.ico
+          UninstallDisplayIcon={app}\LynkcoDaily.exe
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+
+          [Languages]
+          Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+
+          [Files]
+          Source: "dist\LynkcoDaily.exe"; DestDir: "{app}"; Flags: ignoreversion
+          Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
+          Source: "DISCLAIMER.md"; DestDir: "{app}"; Flags: ignoreversion
+          Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+          Source: "assets\zsm.png"; DestDir: "{app}\assets"; Flags: ignoreversion
+          Source: "assets\apk.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
+
+          [Icons]
+          Name: "{group}\LynkcoDaily"; Filename: "{app}\LynkcoDaily.exe"
+          Name: "{autodesktop}\LynkcoDaily"; Filename: "{app}\LynkcoDaily.exe"; Tasks: desktopicon
+
+          [Tasks]
+          Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加选项："; Flags: unchecked
+
+          [Run]
+          Filename: "{app}\LynkcoDaily.exe"; Description: "运行 LynkcoDaily"; Flags: nowait postinstall skipifsilent
+          "@ | Set-Content -Path installer.iss -Encoding UTF8
+
+          $Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (Test-Path $Iscc) {
+            & $Iscc installer.iss
+          } else {
+            iscc installer.iss
+          }
+
+      - name: Upload Windows setup artifact
         uses: actions/upload-artifact@v7
         with:
-          name: LynkcoDaily-Windows
-          path: dist/LynkcoDaily-*-windows-x64.exe
+          path: dist/LynkcoDaily-*-windows-x64-setup.exe
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload Windows portable artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/LynkcoDaily-*-windows-x64.zip
           archive: false
           if-no-files-found: error
 
   build-macos:
     needs: check
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -216,48 +291,23 @@ jobs:
           if [[ -z "${version}" ]]; then
             version="dev-${GITHUB_RUN_NUMBER}"
           fi
-          safe_version="$(echo "${version}" | sed 's/[^A-Za-z0-9._-]/-/g')"
-          runner_arch="$(uname -m)"
-          if [[ "${runner_arch}" == "arm64" ]]; then
-            os_arch="arm64"
-          else
-            os_arch="x64"
-          fi
+          file_version="${version#v}"
+          safe_version="$(echo "${file_version}" | sed 's/[^A-Za-z0-9._-]/-/g')"
+          os_arch="${{ matrix.arch }}"
           hdiutil create -volname "LynkcoDaily" -srcfolder dmg-root -ov -format UDZO "dist/LynkcoDaily-${safe_version}-macos-${os_arch}.dmg"
+          (cd dist && ditto -c -k --sequesterRsrc --keepParent LynkcoDaily.app "LynkcoDaily-${safe_version}-macos-${os_arch}.zip")
 
-      - name: Upload macOS artifact
+      - name: Upload macOS dmg artifact
         uses: actions/upload-artifact@v7
         with:
-          name: LynkcoDaily-macOS
           path: dist/LynkcoDaily-*-macos-*.dmg
           archive: false
           if-no-files-found: error
 
-  build-source:
-    needs: check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Build source archive
-        run: |
-          mkdir -p dist
-          version="${GITHUB_REF_NAME}"
-          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
-            version="${{ inputs.release_tag }}"
-          fi
-          if [[ -z "${version}" ]]; then
-            version="dev-${GITHUB_RUN_NUMBER}"
-          fi
-          safe_version="$(echo "${version}" | sed 's/[^A-Za-z0-9._-]/-/g')"
-          git archive --prefix="lynkco-daily-${safe_version}/" --format=zip --output="dist/lynkco-daily-${safe_version}-source.zip" HEAD
-
-      - name: Upload source artifact
+      - name: Upload macOS app zip artifact
         uses: actions/upload-artifact@v7
         with:
-          name: lynkco-daily-source
-          path: dist/lynkco-daily-*-source.zip
+          path: dist/LynkcoDaily-*-macos-*.zip
           archive: false
           if-no-files-found: error
 
@@ -265,7 +315,6 @@ jobs:
     needs:
       - build-windows
       - build-macos
-      - build-source
     runs-on: ubuntu-latest
     steps:
       - name: Download release artifacts
@@ -276,11 +325,42 @@ jobs:
           merge-multiple: true
 
       - name: Generate checksums
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           cd release-assets
-          sha256sum LynkcoDaily-*.exe LynkcoDaily-*.dmg lynkco-daily-*-source.zip > SHA256SUMS.txt
-          md5sum LynkcoDaily-*.exe LynkcoDaily-*.dmg lynkco-daily-*-source.zip > MD5SUMS.txt
+          version="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            version="${RELEASE_TAG}"
+          fi
+          if [[ -z "${version}" ]]; then
+            version="dev-${GITHUB_RUN_NUMBER}"
+          fi
+          sha256sum LynkcoDaily-*.exe LynkcoDaily-*.dmg LynkcoDaily-*.zip > SHA256SUMS.txt
+          md5sum LynkcoDaily-*.exe LynkcoDaily-*.dmg LynkcoDaily-*.zip > MD5SUMS.txt
+          python - <<'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
+          import json
+          import os
+
+          version = os.environ.get("GITHUB_REF_NAME", "")
+          if os.environ.get("GITHUB_REF_TYPE") != "tag":
+              version = os.environ.get("RELEASE_TAG", "")
+          if not version:
+              version = f"dev-{os.environ['GITHUB_RUN_NUMBER']}"
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          base = f"https://github.com/{repo}/releases/download/{version}"
+          files = sorted(path.name for path in Path(".").glob("LynkcoDaily-*"))
+          payload = {
+              "version": version,
+              "pub_date": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+              "files": [{"name": name, "url": f"{base}/{name}"} for name in files],
+          }
+          Path("latest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PY
           cat SHA256SUMS.txt
           cat MD5SUMS.txt
 
@@ -298,11 +378,17 @@ jobs:
           archive: false
           if-no-files-found: error
 
+      - name: Upload latest metadata artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: release-assets/latest.json
+          archive: false
+          if-no-files-found: error
+
   release:
     needs:
       - build-windows
       - build-macos
-      - build-source
       - checksums
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.release_tag != '')
     runs-on: ubuntu-latest
@@ -334,8 +420,9 @@ jobs:
 
           - Windows 用户下载 `LynkcoDaily-*-windows-x64.exe`
           - macOS 用户下载 `LynkcoDaily-*-macos-*.dmg`
-          - 青龙面板或源码部署用户下载 `lynkco-daily-*-source.zip`
+          - 便携版下载对应平台的 `.zip`
           - 校验文件：`SHA256SUMS.txt`、`MD5SUMS.txt`
+          - 更新元数据：`latest.json`
 
           本项目仅供学习交流使用，请勿用于商业用途。
           EOF
@@ -344,16 +431,17 @@ jobs:
           assets=(
             release-assets/LynkcoDaily-*.exe
             release-assets/LynkcoDaily-*.dmg
-            release-assets/lynkco-daily-*-source.zip
+            release-assets/LynkcoDaily-*.zip
             release-assets/SHA256SUMS.txt
             release-assets/MD5SUMS.txt
+            release-assets/latest.json
           )
 
           prerelease_args=()
           if [[ "${{ inputs.prerelease }}" == "true" ]]; then
             prerelease_args=(--prerelease)
           fi
-          if [[ ${#assets[@]} -lt 5 ]]; then
+          if [[ ${#assets[@]} -lt 9 ]]; then
             echo "发布产物不完整：" >&2
             printf '%s\n' "${assets[@]}" >&2
             exit 1
