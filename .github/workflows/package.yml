@@ -91,12 +91,31 @@ jobs:
           Path("lynkco_private.py").write_text("SECRETS = " + pformat(values) + "\n", encoding="utf-8")
           '@ | python -
 
+      - name: Normalize Windows icon
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          from PIL import Image
+
+          source = Path("assets/apk.ico")
+          target = Path("assets/app-icon.ico")
+          image = Image.open(source)
+          ico = getattr(image, "ico", None)
+          if ico is not None and ico.sizes():
+              size = max(ico.sizes(), key=lambda item: item[0] * item[1])
+              image = ico.getimage(size)
+          image = image.convert("RGBA")
+          sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+          image.save(target, format="ICO", sizes=sizes)
+          '@ | python -
+
       - name: Build Windows exe
         shell: pwsh
         run: |
           pyinstaller --noconfirm --clean --onefile --windowed `
             --name LynkcoDaily `
-            --icon assets/apk.ico `
+            --icon assets/app-icon.ico `
             --collect-data customtkinter `
             --hidden-import lynkco_private `
             --hidden-import lynkco_auto `
@@ -122,6 +141,7 @@ jobs:
           Copy-Item LICENSE "$PortableDir\LICENSE"
           Copy-Item assets\zsm.png "$PortableDir\assets\zsm.png"
           Copy-Item assets\apk.ico "$PortableDir\assets\apk.ico"
+          Copy-Item assets\app-icon.ico "$PortableDir\assets\app-icon.ico"
           Compress-Archive -Path "$PortableDir\*" -DestinationPath "dist\LynkcoDaily-$SafeVersion-windows-x64.zip" -Force
 
           $AppVersion = $FileVersion
@@ -137,7 +157,7 @@ jobs:
           DisableProgramGroupPage=yes
           OutputDir=dist
           OutputBaseFilename=LynkcoDaily-$SafeVersion-windows-x64-setup
-          SetupIconFile=assets\apk.ico
+          SetupIconFile=assets\app-icon.ico
           UninstallDisplayIcon={app}\LynkcoDaily.exe
           Compression=lzma2
           SolidCompression=yes
@@ -153,6 +173,7 @@ jobs:
           Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
           Source: "assets\zsm.png"; DestDir: "{app}\assets"; Flags: ignoreversion
           Source: "assets\apk.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
+          Source: "assets\app-icon.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 
           [Icons]
           Name: "{group}\LynkcoDaily"; Filename: "{app}\LynkcoDaily.exe"
@@ -414,15 +435,20 @@ jobs:
             exit 1
           fi
           cat > release-notes.md <<'EOF'
-          领克每日任务桌面版发布包。
+          ## 下载
 
-          下载说明：
+          - Windows 安装版：`LynkcoDaily-版本-windows-x64-setup.exe`
+          - Windows 便携版：`LynkcoDaily-版本-windows-x64.zip`
+          - macOS Apple Silicon：`LynkcoDaily-版本-macos-arm64.dmg`
+          - macOS Intel：`LynkcoDaily-版本-macos-x64.dmg`
+          - macOS 便携版：`LynkcoDaily-版本-macos-架构.zip`
 
-          - Windows 用户下载 `LynkcoDaily-*-windows-x64.exe`
-          - macOS 用户下载 `LynkcoDaily-*-macos-*.dmg`
-          - 便携版下载对应平台的 `.zip`
-          - 校验文件：`SHA256SUMS.txt`、`MD5SUMS.txt`
-          - 更新元数据：`latest.json`
+          ## 校验
+
+          - `SHA256SUMS.txt`
+          - `MD5SUMS.txt`
+
+          ## 说明
 
           本项目仅供学习交流使用，请勿用于商业用途。
           EOF
