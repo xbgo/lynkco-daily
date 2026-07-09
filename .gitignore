@@ -14,5 +14,8 @@ qinglong/.runtime/
 .DS_Store
 dist/
 build/
+*.spec
+*.exe
+*.dmg
 *.zip
 *.tar.gz

@@ -1,6 +1,6 @@
 # Windows
 
-Windows 版本通过桌面配置面板管理计划任务。
+Windows 版本通过桌面配置面板管理计划任务。发布包会提供 `LynkcoDaily.exe`。
 
 作者：小八  
 抖音：小八的03  
@@ -8,7 +8,7 @@ Windows 版本通过桌面配置面板管理计划任务。
 
 ## 准备
 
-先在仓库根目录完成配置：
+源码运行时，先在仓库根目录完成配置：
 
 ```powershell
 Copy-Item .env.example .env
@@ -27,7 +27,13 @@ python .\lynkco_auto.py
 python .\lynkco_gui.py
 ```
 
-如需指定 Python 路径，在 `.env` 中填写：
+如果使用 GitHub Actions 构建出来的 Windows 包，直接运行 `LynkcoDaily.exe`，在界面里填写配置即可。打包版配置和日志保存在：
+
+```text
+%APPDATA%\lynkco-daily
+```
+
+源码运行如需指定 Python 路径，在 `.env` 中填写：
 
 ```env
 PYTHON_EXE=C:\Path\To\python.exe

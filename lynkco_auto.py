@@ -12,19 +12,25 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import importlib
+import io
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from lynkco_paths import APP_ROOT, IS_FROZEN, SCRIPT_ROOT
 
-ROOT = Path(__file__).resolve().parent
+
+ROOT = APP_ROOT
 DEFAULT_SCRIPT_ARGS = ["--latest-article"]
 AUTHOR_FOOTER = "作者：小八\n抖音：小八的03\n官网：https://xbcars.cn"
 
@@ -331,7 +337,38 @@ def write_log(text: str) -> Path:
 
 
 def run_daily(script_args: list[str], timeout: int, env_overrides: dict[str, str] | None = None) -> tuple[int, str, float]:
-    command = [sys.executable, str(ROOT / "lynkco_daily.py"), *script_args]
+    if IS_FROZEN:
+        old_argv = sys.argv[:]
+        old_env = os.environ.copy()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        started = time.time()
+        code = 0
+        try:
+            if env_overrides:
+                os.environ.update(env_overrides)
+            sys.argv = [sys.argv[0], *script_args]
+            daily_module = importlib.import_module("lynkco_daily")
+            daily_module = importlib.reload(daily_module)
+            daily_main = daily_module.main
+
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                try:
+                    code = int(daily_main() or 0)
+                except SystemExit as exc:
+                    code = int(exc.code or 0) if isinstance(exc.code, int) else 1
+        except Exception:
+            code = 1
+            traceback.print_exc(file=stderr)
+        finally:
+            sys.argv = old_argv
+            os.environ.clear()
+            os.environ.update(old_env)
+        elapsed = time.time() - started
+        output = stdout.getvalue() + ("\n[stderr]\n" + stderr.getvalue() if stderr.getvalue() else "")
+        return code, output, elapsed
+
+    command = [sys.executable, str(SCRIPT_ROOT / "lynkco_daily.py"), *script_args]
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     if env_overrides:

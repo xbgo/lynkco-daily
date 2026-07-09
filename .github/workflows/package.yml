@@ -7,9 +7,8 @@ on:
       - "v*"
 
 jobs:
-  package:
+  check:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,7 +19,7 @@ jobs:
           python-version: "3.11"
 
       - name: Syntax check
-        run: python -m py_compile lynkco_daily.py lynkco_auto.py lynkco_gui.py qinglong/lynkco_ql.py
+        run: python -m py_compile lynkco_paths.py lynkco_daily.py lynkco_auto.py lynkco_gui.py qinglong/lynkco_ql.py
 
       - name: Secret guard
         shell: bash
@@ -32,52 +31,143 @@ jobs:
             exit 1
           fi
 
-      - name: Build packages
+  build-windows:
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          import tarfile
-          import zipfile
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
 
-          root = Path.cwd()
-          dist = root / "dist"
-          dist.mkdir(exist_ok=True)
+      - name: Build Windows exe
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed `
+            --name LynkcoDaily `
+            --icon assets/apk.ico `
+            --collect-data customtkinter `
+            --hidden-import lynkco_auto `
+            --hidden-import lynkco_daily `
+            --hidden-import lynkco_paths `
+            --add-data ".env.example;." `
+            --add-data "assets/zsm.png;assets" `
+            lynkco_gui.py
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          New-Item -ItemType Directory -Force -Path package\assets | Out-Null
+          Copy-Item dist\LynkcoDaily.exe package\LynkcoDaily.exe
+          Copy-Item README.md package\
+          Copy-Item DISCLAIMER.md package\
+          Copy-Item LICENSE package\
+          Copy-Item assets\zsm.png package\assets\zsm.png
+          Copy-Item assets\apk.ico package\assets\apk.ico
+          Compress-Archive -Path package\* -DestinationPath dist\LynkcoDaily-Windows.zip -Force
 
-          common = [
-              "README.md",
-              "DISCLAIMER.md",
-              "LICENSE",
-              ".env.example",
-              "requirements.txt",
-              "lynkco_daily.py",
-              "lynkco_auto.py",
-              "lynkco_gui.py",
-              "assets/zsm.png",
-              "qinglong/README.md",
-              "qinglong/env.example",
-              "qinglong/lynkco_ql.py",
-          ]
-          windows = common + ["windows/README.md"]
-          macos = common + ["macos/README.md"]
-
-          def existing(paths):
-              return [p for p in paths if (root / p).is_file()]
-
-          with zipfile.ZipFile(dist / "lynkco-daily-windows.zip", "w", zipfile.ZIP_DEFLATED) as zf:
-              for name in existing(windows):
-                  zf.write(root / name, f"lynkco-daily/{name}")
-
-          with tarfile.open(dist / "lynkco-daily-macos.tar.gz", "w:gz") as tf:
-              for name in existing(macos):
-                  tf.add(root / name, f"lynkco-daily/{name}")
-
-          with zipfile.ZipFile(dist / "lynkco-daily-source.zip", "w", zipfile.ZIP_DEFLATED) as zf:
-              for name in existing(sorted(set(windows + macos))):
-                  zf.write(root / name, f"lynkco-daily/{name}")
-          PY
-
-      - name: Upload artifacts
+      - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lynkco-daily-packages
-          path: dist/*
+          name: LynkcoDaily-Windows
+          path: dist/LynkcoDaily-Windows.zip
+
+  build-macos:
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build macOS app and dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          source = Path("assets/apk.ico")
+          iconset = Path("build/apk.iconset")
+          iconset.mkdir(parents=True, exist_ok=True)
+
+          image = Image.open(source)
+          ico = getattr(image, "ico", None)
+          if ico is not None and ico.sizes():
+              size = max(ico.sizes(), key=lambda item: item[0] * item[1])
+              image = ico.getimage(size)
+          image = image.convert("RGBA")
+
+          targets = {
+              "icon_16x16.png": 16,
+              "icon_16x16@2x.png": 32,
+              "icon_32x32.png": 32,
+              "icon_32x32@2x.png": 64,
+              "icon_128x128.png": 128,
+              "icon_128x128@2x.png": 256,
+              "icon_256x256.png": 256,
+              "icon_256x256@2x.png": 512,
+              "icon_512x512.png": 512,
+              "icon_512x512@2x.png": 1024,
+          }
+          for name, size in targets.items():
+              image.resize((size, size), Image.LANCZOS).save(iconset / name)
+          PY
+          iconutil -c icns build/apk.iconset -o assets/apk.icns
+          pyinstaller --noconfirm --clean --windowed \
+            --name LynkcoDaily \
+            --icon assets/apk.icns \
+            --collect-data customtkinter \
+            --hidden-import lynkco_auto \
+            --hidden-import lynkco_daily \
+            --hidden-import lynkco_paths \
+            --add-data ".env.example:." \
+            --add-data "assets/zsm.png:assets" \
+            lynkco_gui.py
+          mkdir -p dmg-root
+          cp -R dist/LynkcoDaily.app dmg-root/
+          cp README.md DISCLAIMER.md LICENSE dmg-root/
+          mkdir -p dmg-root/assets
+          cp assets/zsm.png dmg-root/assets/
+          cp assets/apk.ico dmg-root/assets/
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname "LynkcoDaily" -srcfolder dmg-root -ov -format UDZO dist/LynkcoDaily-macOS.dmg
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LynkcoDaily-macOS
+          path: dist/LynkcoDaily-macOS.dmg
+
+  build-source:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build source archive
+        run: |
+          mkdir -p dist
+          git archive --format=zip --output=dist/lynkco-daily-source.zip HEAD
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lynkco-daily-source
+          path: dist/lynkco-daily-source.zip

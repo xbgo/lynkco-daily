@@ -23,12 +23,15 @@ import shutil
 import subprocess
 import sys
 import time
+import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+
+from lynkco_paths import APP_ROOT
 
 
 def load_env_file(path: Path) -> None:
@@ -46,10 +49,18 @@ def load_env_file(path: Path) -> None:
 
 
 def load_private_config() -> None:
-    try:
-        import lynkco_private  # type: ignore[import-not-found]
-    except ModuleNotFoundError:
-        return
+    private_path = APP_ROOT / "lynkco_private.py"
+    if private_path.exists():
+        spec = importlib.util.spec_from_file_location("lynkco_private", private_path)
+        if spec is None or spec.loader is None:
+            return
+        lynkco_private = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(lynkco_private)
+    else:
+        try:
+            import lynkco_private  # type: ignore[import-not-found]
+        except ModuleNotFoundError:
+            return
 
     mapping = {
         "LYNKCO_APP_CODE": ("LYNKCO_APP_CODE", "APP_CODE"),
@@ -67,7 +78,7 @@ def load_private_config() -> None:
             os.environ[env_name] = str(value)
 
 
-load_env_file(Path(__file__).with_name(".env"))
+load_env_file(APP_ROOT / ".env")
 load_private_config()
 
 
@@ -77,8 +88,8 @@ APP_CODE = os.getenv("LYNKCO_APP_CODE", "")
 CA_KEY = os.getenv("LYNKCO_CA_KEY", "")
 CA_SECRET = os.getenv("LYNKCO_CA_SECRET", "").encode("utf-8")
 SIGN_HEADERS = "X-Ca-Key,X-Ca-Timestamp,X-Ca-Nonce,X-Ca-Signature-Method"
-DEFAULT_TOKEN_FILE = Path(__file__).with_name("lynkco_token.json")
-DEFAULT_DEVICE_FILE = Path(__file__).with_name("lynkco_device.json")
+DEFAULT_TOKEN_FILE = APP_ROOT / "lynkco_token.json"
+DEFAULT_DEVICE_FILE = APP_ROOT / "lynkco_device.json"
 TOKEN_CACHE_KEYS = ("token", "refreshToken", "accountName")
 
 

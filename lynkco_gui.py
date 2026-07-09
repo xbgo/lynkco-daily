@@ -11,6 +11,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import importlib
+import io
 import os
 import platform
 import plistlib
@@ -19,10 +22,27 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import traceback
 import webbrowser
 from pathlib import Path
 from tkinter import messagebox
 from typing import Any
+
+from lynkco_paths import APP_ROOT, IS_FROZEN, SCRIPT_ROOT, resource_path
+
+
+if len(sys.argv) >= 3 and sys.argv[1] == "--cli":
+    mode = sys.argv[2]
+    sys.argv = [sys.argv[0], *sys.argv[3:]]
+    if mode == "auto":
+        from lynkco_auto import main as auto_main
+
+        raise SystemExit(auto_main())
+    if mode == "daily":
+        from lynkco_daily import main as daily_main
+
+        raise SystemExit(daily_main())
+    raise SystemExit(f"unknown cli mode: {mode}")
 
 try:
     import customtkinter as ctk
@@ -35,14 +55,14 @@ except ModuleNotFoundError:  # pragma: no cover
     Image = None  # type: ignore[assignment]
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = APP_ROOT
 ENV_FILE = ROOT / ".env"
-ENV_EXAMPLE = ROOT / ".env.example"
+ENV_EXAMPLE = resource_path(".env.example")
 WINDOWS_DAILY_TASK = "LynkcoDaily"
 WINDOWS_STARTUP_TASK = "LynkcoDailyStartup"
 MACOS_DAILY_LABEL = "cn.xbcars.lynkco-daily"
 MACOS_STARTUP_LABEL = "cn.xbcars.lynkco-daily.startup"
-SUPPORT_QR = ROOT / "assets" / "zsm.png"
+SUPPORT_QR = resource_path("assets/zsm.png")
 
 BG = "#eef3f4"
 SURFACE = "#ffffff"
@@ -600,6 +620,8 @@ class LynkcoGui:
             self.secret_button.configure(text="隐藏密钥" if self.secret_visible.get() else "显示密钥")
 
     def python_executable(self) -> str:
+        if IS_FROZEN:
+            return sys.executable
         return self.values.get("PYTHON_EXE") or sys.executable
 
     def append_output(self, text: str) -> None:
@@ -637,14 +659,49 @@ class LynkcoGui:
         threading.Thread(target=worker, daemon=True).start()
 
     def run_python(self, args: list[str]) -> None:
-        self.run_command([self.python_executable(), *[str(ROOT / arg) if arg.endswith(".py") else arg for arg in args]])
+        if IS_FROZEN:
+            module = "auto" if args[0] == "lynkco_auto.py" else "daily"
+            self.run_action(lambda: self.call_cli(module, args[1:]))
+            return
+        self.run_command([self.python_executable(), *[str(SCRIPT_ROOT / arg) if arg.endswith(".py") else arg for arg in args]])
+
+    def call_cli(self, module: str, args: list[str]) -> tuple[int, str]:
+        old_argv = sys.argv[:]
+        old_env = os.environ.copy()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        code = 0
+        try:
+            os.environ.clear()
+            os.environ.update({key: value for key, value in old_env.items() if not key.startswith("LYNKCO_")})
+            sys.argv = [sys.argv[0], *args]
+            module_name = "lynkco_auto" if module == "auto" else "lynkco_daily"
+            cli_module = importlib.import_module(module_name)
+            cli_module = importlib.reload(cli_module)
+            cli_main = cli_module.main
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                try:
+                    code = int(cli_main() or 0)
+                except SystemExit as exc:
+                    code = int(exc.code or 0) if isinstance(exc.code, int) else 1
+        except Exception:
+            code = 1
+            traceback.print_exc(file=stderr)
+        finally:
+            sys.argv = old_argv
+            os.environ.clear()
+            os.environ.update(old_env)
+        output = stdout.getvalue() + ("\n[stderr]\n" + stderr.getvalue() if stderr.getvalue() else "")
+        return code, output
 
     def test_notification(self) -> None:
         self.run_python(["lynkco_auto.py", "--notify-test"])
 
     def task_run_command(self) -> str:
+        if IS_FROZEN:
+            return f'"{sys.executable}" --cli auto'
         python = self.collect_values().get("PYTHON_EXE") or sys.executable
-        return f'"{python}" "{ROOT / "lynkco_auto.py"}"'
+        return f'"{python}" "{SCRIPT_ROOT / "lynkco_auto.py"}"'
 
     def toggle_daily(self) -> None:
         if not (is_windows() or is_macos()):
@@ -715,7 +772,9 @@ class LynkcoGui:
             logs_dir.mkdir(exist_ok=True)
             plist: dict[str, Any] = {
                 "Label": label,
-                "ProgramArguments": [self.collect_values().get("PYTHON_EXE") or sys.executable, str(ROOT / "lynkco_auto.py")],
+                "ProgramArguments": [sys.executable, "--cli", "auto"]
+                if IS_FROZEN
+                else [self.collect_values().get("PYTHON_EXE") or sys.executable, str(SCRIPT_ROOT / "lynkco_auto.py")],
                 "WorkingDirectory": str(ROOT),
                 "StandardOutPath": str(logs_dir / f"{label}.out.log"),
                 "StandardErrorPath": str(logs_dir / f"{label}.err.log"),
