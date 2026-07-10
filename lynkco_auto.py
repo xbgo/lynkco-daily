@@ -432,6 +432,11 @@ def main() -> int:
     if not script_args:
         script_args = DEFAULT_SCRIPT_ARGS
 
+    if args.status_only:
+        print("正在读取账号状态，请稍候...", flush=True)
+    else:
+        print("任务已开始，签到完成后会按配置等待再执行分享，请勿重复运行。", flush=True)
+
     try:
         env_overrides = {"LYNKCO_LATEST_ARTICLE": "0"} if args.status_only else None
         code, raw_output, elapsed = run_daily(script_args, args.timeout, env_overrides=env_overrides)

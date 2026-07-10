@@ -88,6 +88,16 @@ def normalize_config_value(value: str) -> str:
     return value
 
 
+def read_int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 load_env_file(APP_ROOT / ".env")
 load_private_config()
 
@@ -101,8 +111,9 @@ SIGN_HEADERS = "X-Ca-Key,X-Ca-Timestamp,X-Ca-Nonce,X-Ca-Signature-Method"
 DEFAULT_TOKEN_FILE = APP_ROOT / "lynkco_token.json"
 DEFAULT_DEVICE_FILE = APP_ROOT / "lynkco_device.json"
 TOKEN_CACHE_KEYS = ("token", "refreshToken", "accountName")
-HTTP_TIMEOUT = int(os.getenv("LYNKCO_HTTP_TIMEOUT", "15"))
-HTTP_RETRIES = max(1, int(os.getenv("LYNKCO_HTTP_RETRIES", "3")))
+HTTP_TIMEOUT = max(1, read_int_env("LYNKCO_HTTP_TIMEOUT", 15))
+HTTP_RETRIES = max(1, read_int_env("LYNKCO_HTTP_RETRIES", 3))
+DEFAULT_SHARE_DELAY_SECONDS = max(0, read_int_env("LYNKCO_SHARE_DELAY_SECONDS", 60))
 
 
 def _uuid4_like() -> str:
@@ -893,6 +904,7 @@ def main() -> int:
     parser.add_argument("--latest-article-only", action="store_true", help="print newest article from community feed, then exit")
     parser.add_argument("--latest-article-limit", type=int, default=env_int("LYNKCO_LATEST_ARTICLE_LIMIT", 0), help="max feed articles to detail-check for publishTime; 0 means use first feed item directly")
     parser.add_argument("--no-get-share-code", action="store_true", help="do not call getShareCode automatically")
+    parser.add_argument("--share-delay", type=int, default=DEFAULT_SHARE_DELAY_SECONDS, help="seconds to wait between sign-in and share")
     parser.add_argument("--skip-share", action="store_true", help="only sign in")
     parser.add_argument("--status", action="store_true", help="only read sign summary and task list")
     parser.add_argument("--verbose", action="store_true")
@@ -1052,6 +1064,10 @@ def main() -> int:
         if not business_no:
             print("\n[share] skipped: pass --business-no/--share-url or set LYNKCO_BUSINESS_NO/LYNKCO_SHARE_URL")
         else:
+            delay_seconds = max(0, int(args.share_delay or 0))
+            if delay_seconds:
+                print_json("share_delay", {"seconds": delay_seconds, "message": "签到完成，等待后执行分享"})
+                time.sleep(delay_seconds)
             if not share_code and share_url and not args.no_get_share_code:
                 try:
                     share_code_response = client.get_share_code(share_url, effective_device["appVersion"] or "4.2.3")

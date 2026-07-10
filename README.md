@@ -175,6 +175,7 @@ python lynkco_auto.py -- --latest-article --skip-share
 | `LYNKCO_ACCOUNT_NAME` | 否 | 推送里显示的名称；留空则使用接口返回名称 |
 | `LYNKCO_LATEST_ARTICLE` | 否 | 默认 `1`，自动选文章 |
 | `LYNKCO_LATEST_ARTICLE_LIMIT` | 否 | 默认 `0`，速度最快；填 `1/3/5` 会额外校验发布时间 |
+| `LYNKCO_SHARE_DELAY_SECONDS` | 否 | 签到完成后等待再分享，默认 `60` 秒 |
 | `LYNKCO_SCHEDULE_TIME` | 否 | 图形界面安装定时任务时使用，默认 `10:00` |
 
 ## 通知

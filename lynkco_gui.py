@@ -17,12 +17,14 @@ import io
 import os
 import platform
 import plistlib
+import queue
 import re
 import subprocess
 import sys
 import threading
 import tkinter as tk
 import traceback
+import time
 import webbrowser
 from pathlib import Path
 from tkinter import messagebox
@@ -131,6 +133,7 @@ NOTIFY_CHANNELS = [
 ADVANCED_FIELDS = [
     ("LYNKCO_HITOKOTO_URL", "一言接口", False, "默认使用 https://v1.hitokoto.cn/?encode=json&charset=utf-8。"),
     ("LYNKCO_HITOKOTO_TIMEOUT", "一言超时", False, "单位秒，默认 2。接口超时会自动忽略，不影响签到。"),
+    ("LYNKCO_SHARE_DELAY_SECONDS", "分享延迟", False, "签到完成后等待再分享，单位秒，默认 60。"),
     ("LYNKCO_HTTP_TIMEOUT", "接口超时", False, "单位秒，默认 15。网络慢可以适当调大。"),
     ("LYNKCO_HTTP_RETRIES", "失败重试", False, "默认 3。遇到临时网络断开会自动重试。"),
     ("LYNKCO_AUTO_TIMEOUT", "任务超时", False, "单位秒，默认 180。网络慢可以适当调大。"),
@@ -197,6 +200,18 @@ def redact(text: str) -> str:
     return text
 
 
+class StreamingBuffer(io.StringIO):
+    def __init__(self, callback=None) -> None:
+        super().__init__()
+        self.callback = callback
+
+    def write(self, text: str) -> int:
+        size = super().write(text)
+        if text and self.callback is not None:
+            self.callback(text)
+        return size
+
+
 def is_windows() -> bool:
     return platform.system().lower() == "windows"
 
@@ -226,6 +241,8 @@ class LynkcoGui:
         self.support_popup_image: Any = None
         self.secret_button: ctk.CTkButton | None = None
         self.output: ctk.CTkTextbox | None = None
+        self.running = False
+        self.buttons: list[ctk.CTkButton] = []
 
         self.build()
         self.refresh_switches()
@@ -281,7 +298,7 @@ class LynkcoGui:
         self.log_page_name = "运行日志"
 
     def primary_button(self, parent: tk.Widget, text: str, command) -> ctk.CTkButton:
-        return ctk.CTkButton(
+        button = ctk.CTkButton(
             parent,
             text=text,
             command=command,
@@ -292,9 +309,11 @@ class LynkcoGui:
             text_color="#ffffff",
             font=ctk.CTkFont(size=13, weight="bold"),
         )
+        self.buttons.append(button)
+        return button
 
     def secondary_button(self, parent: tk.Widget, text: str, command) -> ctk.CTkButton:
-        return ctk.CTkButton(
+        button = ctk.CTkButton(
             parent,
             text=text,
             command=command,
@@ -307,9 +326,11 @@ class LynkcoGui:
             border_color=BORDER,
             font=ctk.CTkFont(size=13),
         )
+        self.buttons.append(button)
+        return button
 
     def ghost_button(self, parent: tk.Widget, text: str, command) -> ctk.CTkButton:
-        return ctk.CTkButton(
+        button = ctk.CTkButton(
             parent,
             text=text,
             command=command,
@@ -320,6 +341,8 @@ class LynkcoGui:
             text_color="#007966",
             font=ctk.CTkFont(size=12),
         )
+        self.buttons.append(button)
+        return button
 
     def scroll_page(self, parent: tk.Widget) -> ctk.CTkScrollableFrame:
         page = ctk.CTkScrollableFrame(parent, fg_color="transparent", corner_radius=0)
@@ -572,6 +595,9 @@ class LynkcoGui:
         values["LYNKCO_SCHEDULE_TIME"] = self.selected_time()
         values.setdefault("LYNKCO_HITOKOTO_URL", "https://v1.hitokoto.cn/?encode=json&charset=utf-8")
         values.setdefault("LYNKCO_HITOKOTO_TIMEOUT", "2")
+        values.setdefault("LYNKCO_SHARE_DELAY_SECONDS", "60")
+        values.setdefault("LYNKCO_HTTP_TIMEOUT", "15")
+        values.setdefault("LYNKCO_HTTP_RETRIES", "3")
         values.setdefault("LYNKCO_AUTO_TIMEOUT", "180")
         return values
 
@@ -632,46 +658,101 @@ class LynkcoGui:
         self.output.insert("end", redact(text))
         self.output.see("end")
 
-    def run_command(self, command: list[str]) -> None:
+    def set_running(self, running: bool, status: str) -> None:
+        self.running = running
+        self.output_var.set(status)
+        state = "disabled" if running else "normal"
+        for button in list(self.buttons):
+            try:
+                button.configure(state=state)
+            except tk.TclError:
+                self.buttons.remove(button)
+
+    def prepare_run(self, status: str) -> bool:
+        if self.running:
+            self.output_var.set("任务运行中，请稍等")
+            self.append_output("\n任务正在运行，请等待当前任务结束。\n")
+            return False
         self.save_config()
         if hasattr(self, "tabs"):
             self.tabs.set(self.log_page_name)
         if self.output is not None:
             self.output.delete("1.0", "end")
-        self.output_var.set("运行中")
+        self.set_running(True, status)
+        self.append_output(f"{status}\n")
+        return True
+
+    def finish_run(self, status: str) -> None:
+        self.set_running(False, status)
+
+    def run_command(self, command: list[str]) -> None:
+        if not self.prepare_run("运行中，正在请求接口..."):
+            return
 
         def worker() -> None:
+            proc: subprocess.Popen[str] | None = None
             try:
-                proc = subprocess.run(
+                env = os.environ.copy()
+                env.setdefault("PYTHONIOENCODING", "utf-8")
+                env.setdefault("PYTHONUNBUFFERED", "1")
+                timeout = int(self.values.get("LYNKCO_AUTO_TIMEOUT") or "180")
+                started = time.time()
+                proc = subprocess.Popen(
                     command,
                     cwd=str(ROOT),
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
                     text=True,
                     encoding="utf-8",
                     errors="replace",
-                    timeout=int(self.values.get("LYNKCO_AUTO_TIMEOUT") or "180"),
+                    bufsize=1,
+                    env=env,
                 )
-                output = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
-                self.root.after(0, self.append_output, output)
-                self.root.after(0, self.output_var.set, "成功" if proc.returncode == 0 else f"失败：{proc.returncode}")
+
+                lines: queue.Queue[str] = queue.Queue()
+
+                def reader() -> None:
+                    if proc is None or proc.stdout is None:
+                        return
+                    for line in proc.stdout:
+                        lines.put(line)
+
+                reader_thread = threading.Thread(target=reader, daemon=True)
+                reader_thread.start()
+
+                while proc.poll() is None or not lines.empty():
+                    try:
+                        line = lines.get(timeout=0.2)
+                    except queue.Empty:
+                        if proc.poll() is None and time.time() - started > timeout:
+                            proc.kill()
+                            raise subprocess.TimeoutExpired(command, timeout)
+                        continue
+                    self.root.after(0, self.append_output, line)
+
+                reader_thread.join(timeout=1)
+                while not lines.empty():
+                    self.root.after(0, self.append_output, lines.get())
+                code = proc.returncode if proc.returncode is not None else 1
+                self.root.after(0, self.finish_run, "成功" if code == 0 else f"失败：{code}")
             except Exception as exc:
                 self.root.after(0, self.append_output, str(exc))
-                self.root.after(0, self.output_var.set, "执行失败")
+                self.root.after(0, self.finish_run, "执行失败")
 
         threading.Thread(target=worker, daemon=True).start()
 
     def run_python(self, args: list[str]) -> None:
         if IS_FROZEN:
             module = "auto" if args[0] == "lynkco_auto.py" else "daily"
-            self.run_action(lambda: self.call_cli(module, args[1:]))
+            self.run_action(lambda callback: self.call_cli(module, args[1:], callback), stream_output=True)
             return
         self.run_command([self.python_executable(), *[str(SCRIPT_ROOT / arg) if arg.endswith(".py") else arg for arg in args]])
 
-    def call_cli(self, module: str, args: list[str]) -> tuple[int, str]:
+    def call_cli(self, module: str, args: list[str], stream_callback=None) -> tuple[int, str]:
         old_argv = sys.argv[:]
         old_env = os.environ.copy()
-        stdout = io.StringIO()
-        stderr = io.StringIO()
+        stdout = StreamingBuffer(stream_callback)
+        stderr = StreamingBuffer(stream_callback)
         code = 0
         try:
             os.environ.clear()
@@ -816,22 +897,22 @@ class LynkcoGui:
 
         self.run_action(action)
 
-    def run_action(self, action) -> None:
-        self.save_config()
-        if hasattr(self, "tabs"):
-            self.tabs.set(self.log_page_name)
-        if self.output is not None:
-            self.output.delete("1.0", "end")
-        self.output_var.set("运行中")
+    def run_action(self, action, stream_output: bool = False) -> None:
+        if not self.prepare_run("运行中，正在执行操作..."):
+            return
 
         def worker() -> None:
             try:
-                code, output = action()
-                self.root.after(0, self.append_output, output)
-                self.root.after(0, self.output_var.set, "成功" if code == 0 else f"失败：{code}")
+                if stream_output:
+                    callback = lambda text: self.root.after(0, self.append_output, text)
+                    code, output = action(callback)
+                else:
+                    code, output = action()
+                    self.root.after(0, self.append_output, output)
+                self.root.after(0, self.finish_run, "成功" if code == 0 else f"失败：{code}")
             except Exception as exc:
                 self.root.after(0, self.append_output, str(exc))
-                self.root.after(0, self.output_var.set, "执行失败")
+                self.root.after(0, self.finish_run, "执行失败")
 
         threading.Thread(target=worker, daemon=True).start()
 
