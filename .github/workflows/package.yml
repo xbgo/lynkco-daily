@@ -12,6 +12,10 @@ on:
         description: "发布版本号，例如 v1.0.0。留空时只构建不发布"
         required: false
         type: string
+      release_notes:
+        description: "版本更新内容，可用分号分隔多条；留空时根据提交记录自动生成"
+        required: false
+        type: string
       prerelease:
         description: "是否标记为预发布"
         required: false
@@ -437,6 +441,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.release_tag != '')
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout release source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
@@ -447,6 +456,7 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES_INPUT: ${{ inputs.release_notes }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
@@ -457,14 +467,40 @@ jobs:
             echo "release_tag 不能为空" >&2
             exit 1
           fi
-          cat > release-notes.md <<'EOF'
+          version="${tag#v}"
+          cat > release-notes.md <<EOF
           ## 下载
 
-          - Windows 安装版：`LynkcoDaily-版本-windows-x64-setup.exe`
-          - Windows 便携版：`LynkcoDaily-版本-windows-x64.zip`
-          - macOS Apple Silicon：`LynkcoDaily-版本-macos-arm64.dmg`
-          - macOS Intel：`LynkcoDaily-版本-macos-x64.dmg`
-          - macOS 便携版：`LynkcoDaily-版本-macos-架构.zip`
+          - Windows 安装版：LynkcoDaily-${version}-windows-x64-setup.exe
+          - Windows 便携版：LynkcoDaily-${version}-windows-x64.zip
+          - macOS Apple Silicon：LynkcoDaily-${version}-macos-arm64.dmg
+          - macOS Apple Silicon 便携版：LynkcoDaily-${version}-macos-arm64.zip
+          - macOS Intel：LynkcoDaily-${version}-macos-x64.dmg
+          - macOS Intel 便携版：LynkcoDaily-${version}-macos-x64.zip
+
+          ## 本版本更新
+          EOF
+
+          if [[ -n "${RELEASE_NOTES_INPUT//[[:space:]]/}" ]]; then
+            while IFS= read -r item; do
+              item="$(printf '%s' "${item}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+              [[ -z "${item}" ]] && continue
+              if [[ "${item}" == -* ]]; then
+                printf '%s\n' "${item}" >> release-notes.md
+              else
+                printf -- '- %s\n' "${item}" >> release-notes.md
+              fi
+            done < <(printf '%s\n' "${RELEASE_NOTES_INPUT}" | tr ';' '\n')
+          else
+            previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)"
+            if [[ -n "${previous_tag}" ]]; then
+              git log --no-merges --pretty=format:'- %s (`%h`)' "${previous_tag}..${GITHUB_SHA}" >> release-notes.md
+            else
+              git log --no-merges -n 10 --pretty=format:'- %s (`%h`)' "${GITHUB_SHA}" >> release-notes.md
+            fi
+          fi
+
+          cat >> release-notes.md <<'EOF'
 
           ## 校验
 
